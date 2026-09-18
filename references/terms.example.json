@@ -1,0 +1,102 @@
+{
+ "gdp": {
+  "p": "",
+  "t": "abbr.",
+  "m": "GDP，国内生产总值（Gross Domestic Product）"
+ },
+ "cpi": {
+  "p": "",
+  "t": "abbr.",
+  "m": "CPI，消费者价格指数（Consumer Price Index）"
+ },
+ "pce": {
+  "p": "",
+  "t": "abbr.",
+  "m": "PCE，个人消费支出（Personal Consumption Expenditures）"
+ },
+ "mpl": {
+  "p": "",
+  "t": "abbr.",
+  "m": "MPL，劳动的边际产量（Marginal Product of Labor）"
+ },
+ "mpk": {
+  "p": "",
+  "t": "abbr.",
+  "m": "MPK，资本的边际产量（Marginal Product of Capital）"
+ },
+ "mpc": {
+  "p": "",
+  "t": "abbr.",
+  "m": "MPC，边际消费倾向（Marginal Propensity to Consume）"
+ },
+ "crs": {
+  "p": "",
+  "t": "abbr.",
+  "m": "CRS，规模报酬不变（Constant Returns to Scale）"
+ },
+ "nx": {
+  "p": "",
+  "t": "abbr.",
+  "m": "NX，净出口（Net Exports = Exports − Imports）"
+ },
+ "mankiw": {
+  "p": "",
+  "t": "n.",
+  "m": "曼昆（N. Gregory Mankiw，宏观经济学教材作者）"
+ },
+ "cobb": {
+  "p": "",
+  "t": "n.",
+  "m": "柯布（Cobb，柯布—道格拉斯生产函数提出者之一）"
+ },
+ "douglas": {
+  "p": "",
+  "t": "n.",
+  "m": "道格拉斯（Douglas，柯布—道格拉斯生产函数提出者之一）"
+ },
+ "endogenous": {
+  "p": "enˈdɒdʒənəs",
+  "t": "adj.",
+  "m": "内生的（由模型内部决定的）"
+ },
+ "exogenous": {
+  "p": "ekˈsɒdʒənəs",
+  "t": "adj.",
+  "m": "外生的（在模型中被视为给定的）"
+ },
+ "transduction": {
+  "p": "trænsˈdʌkʃn",
+  "t": "n.",
+  "m": "转导"
+ },
+ "deflator": {
+  "p": "dɪˈfleɪtə(r)",
+  "t": "n.",
+  "m": "平减指数（剔除价格变动影响的指数）"
+ },
+ "gm": {
+  "p": "",
+  "t": "abbr.",
+  "m": "通用汽车（General Motors）"
+ },
+ "bmw": {
+  "p": "",
+  "t": "abbr.",
+  "m": "宝马（Bayerische Motoren Werke）"
+ },
+ "us": {
+  "p": "",
+  "t": "abbr.",
+  "m": "美国（United States）"
+ },
+ "usa": {
+  "p": "",
+  "t": "abbr.",
+  "m": "美国（United States of America）"
+ },
+ "price-quantity": {
+  "p": "",
+  "t": "n.",
+  "m": "价格—数量（法）"
+ }
+}
