@@ -11,6 +11,22 @@
 - **完全离线** —— 图片 base64 内联、词典内联，产物断网可用、可直接转发
 - **译文质量有硬性保证** —— 构建时审核，缺句/占位符/未翻译会直接失败
 
+## 效果演示
+
+一份 8 页宏观经济学讲义（LaTeX 排版 PDF）→ 双语对照 HTML：
+
+| 原版 PDF | 双语对照 HTML |
+|---|---|
+| ![原版 PDF 第 1 页](examples/original-p1.png) | ![译后·首屏](examples/bilingual-top.png) |
+| ![原版 PDF 第 2 页](examples/original-p2.png) | ![译后·第 4 页（公式与编号小节）](examples/bilingual-mid.png) |
+
+点词查义 —— 音标、词性、中文释义都在本地弹窗里给出，右上角可朗读；
+释义在生成时已内联，点击零延迟：
+
+![点词查义](examples/bilingual-wordpop.png)
+
+> 截图来自公开课程讲义（Econ 302 Handout 1），仅用于功能演示。
+
 ## 扫描件（JSTOR 式双栏论文）
 
 扫描件 + OCR 文字层可以做，但难点不在翻译，在**版式数据清理**，专用脚本有 16 个
