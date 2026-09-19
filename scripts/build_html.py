@@ -288,31 +288,206 @@ def estimate_height(el: dict, zh: list[str], size: float, width: float) -> float
 # --------------------------------------------------------------------------
 # Page layout: push elements down so inserted Chinese never overlaps
 # --------------------------------------------------------------------------
-def _column_right(page_w: float, x0: float, y0: float, y1: float) -> float:
+def _blanks(el: dict) -> bool:
+    """An element a repair pass emptied: it must paint nothing and hold no room.
+
+    Stripping a running page number (fix_pagenums.py) leaves the element in
+    place with its text cleared, so that every span id stays stable. Left
+    occupying its slot it would still reserve 13px of the page and push the
+    body below it down, which shows up as a stray gap where the folio used to
+    be. Clearing the box instead lets the column close up over the gap.
+
+    Such an element must also be invisible to `_detect_gutter`: the page-1
+    folio happens to sit at x=241, right of the centre line, so a cleared
+    remnant of it would still be read as a right-column span and would drag
+    the gutter off the real column start.
+    """
+    if el.get("kind") not in ("text", "formula"):
+        return False
+    if (el.get("text") or "").strip():
+        return False
+    return not any((s or "").strip() for s in (el.get("sentences") or []))
+
+
+def _detect_gutter(page_w: float, page_h: float,
+                   elements: list[dict]) -> float | None:
+    """Left edge of a right-hand column, or None on a single-column page.
+
+    Three signals. The first is required; then either of the next two proves a
+    column.
+
+      * horizontal -- text spans begin past 45% of the page width, which a
+        single-column page rarely does;
+      * vertical -- those spans must run down a large share of the page; or
+      * overlap -- those spans must sit *beside* the left column, sharing a
+        vertical band with it.
+
+    The vertical test separates a genuine right column from a title page's
+    author/affiliation lines. Those also sit right of centre, but occupy only a
+    band near the top. Measured on a two-column journal scan, the right column
+    covers ~85% of page height while a title-page block covers ~35%, so the 60%
+    threshold sits in a wide empty gap rather than near either value.
+
+    The overlap test covers the page the vertical test rejects: an article's
+    first page, where a masthead, title, byline and acknowledgment footnote
+    push the columns down into the lower half, so the right column spans only
+    ~30% of the page. It is still a real column -- the giveaway is that it
+    shares its vertical band with the left column, whereas a single-column
+    page's right-of-centre lines sit strictly above or below the body, never
+    alongside it. Measured on the Mankiw scan: page 1 scores 100% overlap,
+    every other page scores above 90%, and a title-page block would score ~0%.
+
+    Getting this wrong is not cosmetic. With page 1 read as single-column, all
+    five of its bodies are appended to one cursor, so the three left-column
+    blocks are also widened to the full 380pt text measure -- the page renders
+    as three full-width blocks alternating with two half-width ones, one 1600px
+    run instead of two side-by-side columns.
+
+    The column start is the MINIMUM x0 of the right side, which is the right
+    column's lower bound -- every right-column span sits at or right of it, so
+    `_column_of` admits them all. That only holds if nothing else sneaks into
+    the right side, and the divider is therefore the page's centre, not 45% of
+    its width. A page's folio is what makes the difference: page 1's "1645"
+    sits at x=241, inside the left column's x-range but just past the 45% line.
+    Counted as a right-side span it becomes the minimum, dragging the gutter
+    from 261 to 241 -- whereupon every left-column block appears to straddle the
+    gutter and the page collapses into one tall run. At the centre (252) it
+    falls on the left side with the rest of its column and the gutter is
+    untouched.
+
+    Note the trap in the other direction: taking the median instead of the
+    minimum looks robust but is worse. Right-column spans scatter over a few
+    points (261.35, 261.82, ...), so the median lands between them and every
+    right-column span left of it is then read as a cross-column block -- 9
+    false cross-column hits on the 21-element reference page alone.
+    """
+    if page_w <= 0 or page_h <= 0:
+        return None
+    mid = page_w * 0.5
+    right_side = [
+        e for e in elements
+        if e.get("kind") == "text" and not _blanks(e) and e["bbox"][0] > mid
+    ]
+    if len(right_side) < 2:
+        return None
+    top = min(e["bbox"][1] for e in right_side)
+    bottom = max(e["bbox"][3] for e in right_side)
+    span = bottom - top
+    if span >= page_h * 0.60:
+        return min(e["bbox"][0] for e in right_side)
+
+    left_side = [
+        e for e in elements
+        if e.get("kind") == "text" and not _blanks(e) and e["bbox"][0] <= mid
+    ]
+    if len(left_side) < 2 or span <= 0:
+        return None
+    l_top = min(e["bbox"][1] for e in left_side)
+    l_bottom = max(e["bbox"][3] for e in left_side)
+    overlap = min(bottom, l_bottom) - max(top, l_top)
+    if overlap < span * 0.75:
+        return None
+    return min(e["bbox"][0] for e in right_side)
+
+
+def _column_right(page_w: float, x0: float, y0: float, y1: float,
+                  gutter: float | None = None) -> float:
     """Right edge of the text column containing a span.
 
     PDF text spans report the width of their glyphs, not the width of the
     column, so a title's bbox can be much narrower than the space it actually
     has. We widen to a standard margin-derived column edge.
+
+    On a two-column page this must stop at the gutter. The margin heuristic
+    below assumes one column, and left-column spans are narrow (~190pt of a
+    504pt page) while the heuristic offers them ~380pt -- so without the gutter
+    cap every left-column block stretches under the right column, while
+    right-column blocks (whose x0 is already close to the margin) keep their
+    true width. The result is a visibly lopsided page.
     """
     # Typical paper margins: ~72pt left/right, ~54pt for two-column layouts.
     if page_w <= 0:
         return x0 + 200.0
     margin = 72.0 if page_w > 500 else 28.0
     right = page_w - margin
+    if gutter and x0 < gutter and gutter < right:
+        right = gutter - 8.0
     if right <= x0 + 20:
         right = page_w - 24.0
     return right
 
 
+# A page raster is dropped only when the text layer describes at least this
+# much of it, measured vertically. Below the threshold the raster still holds
+# content the text layer does not.
+SCAN_COVER_MIN = 0.70
+
+
+def _vertical_coverage(covered: list[tuple[float, float]],
+                       y0: float, y1: float) -> float:
+    """Share of [y0, y1] covered by the union of `covered` intervals."""
+    span = max(y1 - y0, 1e-6)
+    merged: list[list[float]] = []
+    for a, b in sorted(covered):
+        if merged and a <= merged[-1][1] + 1e-6:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    total = 0.0
+    for a, b in merged:
+        lo, hi = max(a, y0), min(b, y1)
+        if hi > lo:
+            total += hi - lo
+    return total / span
+
+
+def _mark_scan_images(elements: list[dict], page_w: float, page_h: float,
+                      mode: str) -> None:
+    """Mark page-sized scan rasters that should not be painted.
+
+    A scanned article stores each page twice: as one full-page raster, and as a
+    text layer describing the same page. `extract.py` already recovers the text
+    from that layer, so where the layer is complete the raster carries nothing
+    new -- yet it costs most of the file (8.4MB of 9.4MB on a 15-page scan) and
+    paints a tall block of untranslated original above every translated page,
+    which reads as "part of this document was skipped".
+
+    The test is how much of the raster the text layer actually covers, not how
+    much text there is. Page 1 of a scanned article is the counter-example: its
+    masthead, title, byline and acknowledgment footnote are set in large or
+    italic type that OCR misses, so the text layer starts 44% of the way down
+    the page. There the raster is the only copy of the cover, and dropping it
+    would lose the article's own identity. Below SCAN_COVER_MIN the raster is
+    kept whole; crop_scan_cover.py can then trim it to just the uncovered part.
+    """
+    if mode == "keep":
+        return
+    page_area = max(page_w * page_h, 1e-6)
+    covered = [
+        (e["bbox"][1], e["bbox"][3])
+        for e in elements
+        if e.get("kind") in ("text", "formula") and (e.get("text") or "").strip()
+    ]
+    for el in elements:
+        if el.get("kind") != "image":
+            continue
+        x0, y0, x1, y1 = el["bbox"]
+        if (x1 - x0) * (y1 - y0) < 0.8 * page_area:
+            continue                      # a figure, not the scanned page
+        if mode == "auto" and _vertical_coverage(covered, y0, y1) < SCAN_COVER_MIN:
+            continue                      # keep: the text layer does not cover it
+        el["_skip"] = True
+
+
 def relayout_page(elements: list[dict], translations: dict, page_no: int,
-                  page_h: float, page_w: float = 595.0, gap: float = 3.0) -> list[dict]:
+                  page_h: float, page_w: float = 595.0, gap: float = 3.0,
+                  scan_images: str = "auto") -> list[dict]:
     """Grow each element to fit its translation and push later ones down.
 
     Two passes:
       1. Width pass  -- widen narrow spans so wrapped copy has room.
       2. Height pass -- grow to fit Chinese, then push subsequent elements down
-                        (in reading order) so nothing overlaps.
+                        so nothing overlaps. Columns advance independently.
     """
     ordered = sorted(
         range(len(elements)),
@@ -322,6 +497,9 @@ def relayout_page(elements: list[dict], translations: dict, page_no: int,
     out = [dict(e) for e in elements]
     out = [dict(e, _i=i) for i, e in enumerate(out)]
 
+    gutter = _detect_gutter(page_w, page_h, out)
+    _mark_scan_images(out, page_w, page_h, scan_images)
+
     # --- pass 1: widen text boxes toward their column edge -----------------
     for idx in ordered:
         el = out[idx]
@@ -330,7 +508,7 @@ def relayout_page(elements: list[dict], translations: dict, page_no: int,
         x0, y0, x1, y1 = el["bbox"]
         size = el.get("size") or 11.0
         natural = max(x1 - x0, 4.0)
-        room = _column_right(page_w, x0, y0, y1) - x0
+        room = _column_right(page_w, x0, y0, y1, gutter) - x0
         if room <= natural:
             continue
         # Only widen when it helps: the span is a heading-line or its text
@@ -339,12 +517,35 @@ def relayout_page(elements: list[dict], translations: dict, page_no: int,
         if need > natural * 1.02 or size >= 13.0:
             el["bbox"] = [x0, y0, x0 + min(room, max(natural, need * 1.02, natural)), y1]
 
-    # --- pass 2: grow for Chinese and de-overlap ---------------------------
-    last_bottom = -1e9
-    gap = 3.0
+    # --- pass 2: grow for Chinese and de-overlap, one cursor per column ----
+    # A two-column page must advance each column independently. With a single
+    # shared cursor the page degenerates into one long vertical run -- left
+    # block, right block, next left block ... -- so at any given height only
+    # one column holds content and the other is blank, while the page grows to
+    # about the sum of both columns instead of the taller one. Measured on the
+    # 504pt scan: 3409px of page for 1350px of column copy.
+    cursors = {"left": -1e9, "right": -1e9, "full": -1e9}
+
+    def _column_of(el: dict) -> str:
+        """Which cursor governs this element."""
+        if gutter is None or el.get("kind") != "text":
+            return "full"
+        bx0, _, bx1, _ = el["bbox"]
+        if bx1 <= gutter:
+            return "left"
+        if bx0 >= gutter:
+            return "right"
+        return "full"          # straddles the gutter, so it blocks both columns
 
     for idx in ordered:
         el = out[idx]
+        if el.get("_skip") or _blanks(el):
+            # Keeps its slot (span ids stay stable) but paints and occupies
+            # nothing, so the columns below are free to move up.
+            bx0 = el["bbox"][0]
+            el["bbox"] = [bx0, 0.0, bx0, 0.0]
+            continue
+
         x0, y0, x1, y1 = el["bbox"]
         w = max(x1 - x0, 4.0)
         size = el.get("size") or 11.0
@@ -356,24 +557,25 @@ def relayout_page(elements: list[dict], translations: dict, page_no: int,
             new_h = estimate_height(el, zh, size, w)
             new_h = max(new_h, max(y1 - y0, size))
 
-            top = y0 if y0 >= last_bottom + gap else last_bottom + gap
-            el["bbox"] = [x0, top, x1, top + new_h]
-            last_bottom = top + new_h
-
         elif el["kind"] == "formula":
-            h = max(y1 - y0, size * 1.2)
-            top = y0 if y0 >= last_bottom + gap else last_bottom + gap
-            el["bbox"] = [x0, top, x1, top + h]
-            last_bottom = top + h
+            new_h = max(y1 - y0, size * 1.2)
 
         else:  # image
-            h = max(y1 - y0, 4.0)
-            top = y0 if y0 >= last_bottom + gap else last_bottom + gap
-            el["bbox"] = [x0, top, x1, top + h]
-            last_bottom = top + h
-            # Images reserve their full height: nothing may be pushed on top
-            # of them, because their internal OCR hotspots are positioned
-            # relative to the image box and would drift if it were resized.
+            # Images reserve their full height: nothing may be pushed on top of
+            # them, because their internal OCR hotspots are positioned relative
+            # to the image box and would drift if it were resized.
+            new_h = max(y1 - y0, 4.0)
+
+        col = _column_of(el)
+        floor = max(cursors.values()) if col == "full" else cursors[col]
+        top = y0 if y0 >= floor + gap else floor + gap
+        el["bbox"] = [x0, top, x1, top + new_h]
+
+        if col == "full":
+            for key in cursors:
+                cursors[key] = top + new_h
+        else:
+            cursors[col] = top + new_h
 
     return out
 
@@ -400,6 +602,10 @@ def font_stack(font_name: str, style: dict) -> str:
 # --------------------------------------------------------------------------
 def render_element(el: dict, page_no: int, idx: int, tr: dict, mode: str,
                    hotspots: dict | None = None) -> str:
+    # A page-sized scan dropped by relayout_page keeps its slot in the element
+    # list, which keeps every span id stable, but paints nothing.
+    if el.get("_skip"):
+        return ""
     span_id = f"{page_no}#{idx}"
     x0, y0, x1, y1 = el["bbox"]
     w = max(x1 - x0, 4.0)
@@ -441,8 +647,11 @@ def render_element(el: dict, page_no: int, idx: int, tr: dict, mode: str,
         )
 
     if el["kind"] == "formula":
-        # Formula text is rendered as-is (recognised, not cropped).
+        # Formula text is rendered as-is (recognised, not cropped). An emptied
+        # formula element -- a stripped folio -- paints nothing at all.
         body = html.escape(el.get("text", ""))
+        if not body.strip():
+            return ""
         latex = (tr or {}).get(f"{span_id}::latex")
         return (
             f'<div class="el formula" style="left:{x0}px;top:{y0}px;'
@@ -460,6 +669,13 @@ def render_element(el: dict, page_no: int, idx: int, tr: dict, mode: str,
     plain = el.get("text", "").strip()
     bodyless = bool(re.fullmatch(r"\d{1,3}", plain))
     is_short = len(plain) <= 24
+
+    # An element emptied by an earlier repair pass (for instance a reference
+    # continuation folded into the entry above it) still holds its slot in the
+    # element list, which keeps every span id stable, but it must not paint an
+    # empty box on the page. Rendering nothing keeps the ids and drops the box.
+    if not plain and not any(s.strip() for s in sentences):
+        return ""
 
     parts: list[str] = []
     lead = float(size) * 1.18
@@ -548,7 +764,8 @@ def expand_dictionary(model: dict, dictionary: dict) -> tuple[dict, dict]:
 
 
 def build(model: dict, translations: dict, dictionary: dict, title: str, mode: str,
-          hotspots: dict | None = None) -> tuple[str, dict]:
+          hotspots: dict | None = None,
+          scan_images: str = "auto") -> tuple[str, dict]:
     # Resolve every clickable word up front and inline the result, so the
     # rendered page never needs to look anything up at click time.
     inlined, dict_report = expand_dictionary(model, dictionary)
@@ -572,13 +789,14 @@ def build(model: dict, translations: dict, dictionary: dict, title: str, mode: s
             continue
 
         # Grow + de-overlap before rendering so Chinese never collides.
-        laid = relayout_page(page["elements"], translations, pno, ph, pw)
+        laid = relayout_page(page["elements"], translations, pno, ph, pw,
+                             scan_images=scan_images)
         els = [
             render_element(el, pno, el.get("_i", idx), translations, mode, hotspots)
             for idx, el in enumerate(laid)
         ]
         # Page height grows to contain everything (so nothing is clipped).
-        used = max((e["bbox"][3] for e in laid), default=ph)
+        used = max((e["bbox"][3] for e in laid if not e.get("_skip")), default=ph)
         final_h = max(ph, used + 24.0)
         pages_html.append(
             f'<section class="page" data-page="{pno}" '
@@ -869,6 +1087,13 @@ def main() -> int:
     ap.add_argument("--hotspots", default=None,
                     help="JSON from ocr_hotspots.py for in-figure clickable text")
     ap.add_argument("--mode", default="below", choices=["below", "side", "toggle"])
+    ap.add_argument("--scan-images", default="auto",
+                    choices=["auto", "keep", "drop"],
+                    help="page-sized scan rasters: auto drops them where the "
+                         "text layer covers the page (so the raster is a "
+                         "duplicate) and keeps pages it does not cover, such as "
+                         "an OCR-missed cover; drop always drops; keep always "
+                         "retains. Default: auto")
     ap.add_argument("--allow-incomplete", action="store_true",
                     help="build even if the translation audit fails (debug only)")
     args = ap.parse_args()
@@ -901,7 +1126,8 @@ def main() -> int:
 
     title = args.title or model.get("source", "双语对照阅读")
     html_out, dict_report = build(
-        model, translations, dictionary, title, args.mode, hotspots
+        model, translations, dictionary, title, args.mode, hotspots,
+        scan_images=args.scan_images,
     )
 
     with open(args.output, "w", encoding="utf-8") as f:

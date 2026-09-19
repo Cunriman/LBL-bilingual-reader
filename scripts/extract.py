@@ -128,7 +128,7 @@ ABBREVIATIONS = {
     "acm", "proc", "conf", "stat", "al", "ca", "circa", "esp",
 }
 
-_SENT_END_RE = re.compile(r'(?<=[.!?])["\'\)\]]?\s+')
+_SENT_END_RE = re.compile(r'(?<=[.!?])(?=\s)|(?<=[.!?]["\'\)\]])(?=\s)')
 _TRAILING_NUM_RE = re.compile(r"(?:\b[A-Za-z]{1,4}|\d+)\.$")
 _INITIAL_RE = re.compile(r"(?:^|\s)[A-Z]\.$")
 
@@ -206,6 +206,7 @@ def extract_pdf(path: str, font_dir: str | None) -> dict[str, Any]:
     for pno in range(len(doc)):
         page = doc[pno]
         rect = page.rect
+        page_area = max(rect.get_area(), 1e-6)
         raw = page.get_text("dict")
 
         elements: list[Element] = []
@@ -246,6 +247,12 @@ def extract_pdf(path: str, font_dir: str | None) -> dict[str, Any]:
                 if inter.is_empty:
                     continue
                 if inter.get_area() >= 0.6 * max(r.get_area(), 1e-6):
+                    # A page-sized image is a scan/facsimile background: the
+                    # text layer on top of it is the real content, not a
+                    # duplicate, so it must not be dropped. Only smaller
+                    # figure images legitimately shadow the text beneath them.
+                    if ir.get_area() >= 0.8 * page_area:
+                        return False
                     return True
             return False
 
